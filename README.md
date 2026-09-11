@@ -79,3 +79,28 @@ The GitHub Actions workflow needs AWS credentials as repository secrets (`AWS_AC
 - No document verification (income docs, ID verification)
 - No formal model validation of the underlying LLM's decision quality beyond this eval suite (e.g., no fairness/bias testing across protected classes — a real production system would need this)
 - Guardrail thresholds ($50k, 43% DTI, 680 credit score) are illustrative, not derived from a specific institution's actual policy
+
+## Proof it actually works
+
+### The guardrail override, on tape
+
+A live request to the deployed Lambda for an applicant with excellent credit (780), low DTI (15.4%), and a strong income ($140k) - but a $75,000 loan request, over the $50,000 auto-approve ceiling.
+
+The agent's own reasoning concluded "approve" with a detailed justification citing every positive signal in the file. The guardrail layer overrode it anyway, purely on the dollar amount:
+
+> "final_decision": "escalate", "guardrail_triggered": true, "guardrail_reason": "Agent proposed auto-approval, but hard policy limit(s) require human review: loan amount $75,000 >= $50,000 auto-approve ceiling"
+
+This is the actual point of the project: the agent can build a compelling case for an unsafe action, and the deterministic layer stops it anyway - not because the model chose to comply, but because it structurally cannot bypass the check.
+
+![Guardrail override transcript](docs/screenshots/guardrail-override-transcript.png)
+
+### Automated eval running in CI, not just locally
+
+The eval suite runs automatically via GitHub Actions on every push - not a script that has to be remembered and run by hand.
+
+![CI workflow passing](docs/screenshots/ci-workflow-passing.png)
+![CI job steps](docs/screenshots/ci-job-steps.png)
+
+Eval output from inside the CI run itself: Tool-call completeness 1.00, Decision accuracy 1.00, Guardrail failures 0 (zero tolerance threshold) - PASS, all thresholds met.
+
+![CI eval log output](docs/screenshots/ci-eval-log-output.png)
