@@ -1,0 +1,5 @@
+applicant_id,final_decision,expected_decision,decision_correct,tool_completeness,guardrail_ok,guardrail_triggered
+APP-1001,approve,approve,True,1.0,True,False
+APP-1002,escalate,,,1.0,True,False
+APP-1003,escalate,,,1.0,True,True
+APP-1004,decline,,,1.0,True,False

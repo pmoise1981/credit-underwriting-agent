@@ -1,0 +1,47 @@
+# Runs the agentic eval suite automatically on every push and pull request.
+# If eval_agentic.py exits non-zero (a guardrail failure or a score below
+# threshold), this workflow fails, which GitHub can be configured to use as
+# a required check — blocking the merge of a change that regresses agent
+# safety or quality. This is the actual "automatic eval test" deliverable:
+# evaluation as a continuous gate, not a script you remember to run by hand.
+name: Agent Evaluation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Seed synthetic test data
+        run: python data_seed.py
+
+      - name: Run agentic eval suite
+        run: python eval/eval_agentic.py
+
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: eval/eval_results.csv
