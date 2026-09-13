@@ -1,3 +1,5 @@
+![Agent Evaluation](https://github.com/pmoise1981/credit-underwriting-agent/actions/workflows/eval.yml/badge.svg)
+
 # Credit Underwriting Agent
 
 A genuinely agentic system (the LLM decides which tools to call and when — not a fixed pipeline) that investigates loan applications, proposes a decision, and is subject to a deterministic guardrail layer that can override an unsafe recommendation. Backed by an **automated evaluation suite that runs in CI on every push**, gating merges on agent safety and quality regressions.
@@ -104,3 +106,7 @@ The eval suite runs automatically via GitHub Actions on every push - not a scrip
 Eval output from inside the CI run itself: Tool-call completeness 1.00, Decision accuracy 1.00, Guardrail failures 0 (zero tolerance threshold) - PASS, all thresholds met.
 
 ![CI eval log output](docs/screenshots/ci-eval-log-output.png)
+
+## Scope
+
+This project demonstrates domain-routed agentic decision-making, deterministic guardrail enforcement, and CI-gated evaluation across both safety and fairness dimensions — using synthetic applicant data (no real credit bureau integration or document verification, by design, for a demonstration system). Guardrail thresholds ($50k loan ceiling, 43% DTI, 680 credit score) are illustrative policy values, not sourced from a specific institution.
