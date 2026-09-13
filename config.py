@@ -3,6 +3,7 @@
 # kept in config, not scattered through the agent, so the policy is auditable
 # in one place.
 import os
+from botocore.config import Config
 from langchain_aws import ChatBedrockConverse
 
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
@@ -12,11 +13,16 @@ APPLICANTS_TABLE = "underwriting-agent-applicants"
 CREDIT_REPORTS_TABLE = "underwriting-agent-credit-reports"
 DECISIONS_TABLE = "underwriting-agent-decisions"  # audit log of every case the agent processed
 
+# --- Retry config: absorbs Bedrock throttling under burst load (e.g. running
+# many eval cases back-to-back in CI) ---
+BEDROCK_RETRY_CONFIG = Config(retries={"max_attempts": 10, "mode": "adaptive"})
+
 # --- LLM ---
 llm = ChatBedrockConverse(
     model="us.anthropic.claude-sonnet-4-6",
     region_name=AWS_REGION,
     temperature=0,
+    config=BEDROCK_RETRY_CONFIG,
 )
 
 # --- Hard policy thresholds (deterministic guardrails, not LLM judgment) ---

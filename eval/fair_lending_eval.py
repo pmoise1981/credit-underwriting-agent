@@ -21,6 +21,7 @@ import csv
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agent import run_case
+import time
 from data_seed import SYNTHETIC_APPLICANTS
 
 DISPARITY_THRESHOLD = 0.80  # standard four-fifths rule cutoff
@@ -64,6 +65,7 @@ def run_fair_lending_eval():
         print(f"  Running case: {applicant_id} ({group})")
 
         result = run_case(applicant_id)
+        time.sleep(1)  # space out requests to avoid Bedrock throttling under burst load
         decisions.append({"group": group, "decision": result["final_decision"]})
         rows.append({
             "applicant_id": applicant_id,
