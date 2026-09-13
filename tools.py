@@ -30,7 +30,9 @@ def get_applicant_profile(applicant_id: str) -> dict:
     table = _dynamodb.Table(APPLICANTS_TABLE)
     response = table.get_item(Key={"applicant_id": applicant_id})
     item = response.get("Item", {"error": f"No applicant found for {applicant_id}"})
-    return _clean_decimals(item)
+    item = _clean_decimals(item)
+    item.pop("demographic_group", None)  # never expose protected-class field to the agent itself
+    return item
 
 
 @tool

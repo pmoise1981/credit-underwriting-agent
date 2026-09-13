@@ -36,6 +36,9 @@ jobs:
       - name: Seed synthetic test data
         run: python data_seed.py
 
+      - name: Run fair lending disparity eval
+        run: python eval/fair_lending_eval.py
+
       - name: Run agentic eval suite
         run: python eval/eval_agentic.py
 
