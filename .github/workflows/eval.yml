@@ -26,6 +26,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Run deterministic unit tests
+        run: python -m pytest eval/ -v
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -47,4 +50,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: eval-results
-          path: eval/eval_results.csv
+          # eval_history.jsonl included so each run's appended entry is
+          # inspectable — note this is a per-run snapshot, not a persisted
+          # cross-run store: the workflow doesn't commit the file back, so an
+          # actual multi-commit trend requires committing new entries to the
+          # repo (as the two current entries were) or writing history to
+          # storage external to the runner.
+          path: |
+            eval/eval_results.csv
+            eval/fair_lending_results.csv
+            eval/eval_history.jsonl

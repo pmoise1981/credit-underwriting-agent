@@ -4,19 +4,17 @@
 #
 # After the agent proposes a decision, a SEPARATE deterministic step (guardrails.py)
 # has final say — the agent's proposal is a recommendation, not an authorization.
-from typing import Literal
 import uuid
 import json
 from decimal import Decimal
 from datetime import datetime, timezone
 
 import boto3
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langgraph.prebuilt import create_react_agent
-from pydantic import BaseModel, Field
 
 from config import llm, AWS_REGION, DECISIONS_TABLE
-from tools import get_applicant_profile, get_credit_report, calculate_dti
+from tools import get_applicant_profile, get_credit_report, calculate_dti, submit_decision
 from guardrails import enforce_guardrails
 
 _dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
@@ -34,24 +32,31 @@ def _floats_to_decimal(obj):
     return obj
 
 
-TOOLS = [get_applicant_profile, get_credit_report, calculate_dti]
+TOOLS = [get_applicant_profile, get_credit_report, calculate_dti, submit_decision]
 react_agent = create_react_agent(llm, tools=TOOLS)
 
 SYSTEM_INSTRUCTION = (
     "You are a loan underwriting assistant. Given an applicant ID, investigate the case: "
     "fetch the applicant's profile, fetch their credit report, and calculate their DTI ratio. "
-    "Then propose ONE recommendation: 'approve', 'decline', or 'escalate' (for cases needing human "
-    "judgment), with a one-paragraph justification. You are making a RECOMMENDATION only — a separate "
-    "policy layer has final authority and may override you."
+    "Then call submit_decision, exactly once, as your final action, with ONE recommendation — "
+    "'approve', 'decline', or 'escalate' (for cases needing human judgment) — and a one-paragraph "
+    "justification. Calling submit_decision IS how you submit your recommendation; do not just "
+    "describe it in prose. You are making a RECOMMENDATION only — a separate policy layer has final "
+    "authority and may override you."
 )
 
 
-class ProposedDecision(BaseModel):
-    decision: Literal["approve", "decline", "escalate"] = Field(description="The agent's recommended decision")
-    justification: str = Field(description="One-paragraph reasoning for the recommendation")
-
-
-decision_extractor = llm.with_structured_output(ProposedDecision)
+def _extract_proposed_decision(messages) -> dict | None:
+    """Finds the agent's submit_decision call and returns its arguments. This
+    reads the actual tool call the agent made — the real final action — rather
+    than re-parsing the agent's closing prose with a second LLM call, which is
+    fragile and not what the agent actually committed to as its action."""
+    for msg in messages:
+        if isinstance(msg, AIMessage):
+            for call in msg.tool_calls or []:
+                if call["name"] == "submit_decision":
+                    return {"decision": call["args"]["decision"], "justification": call["args"]["justification"]}
+    return None
 
 
 def _extract_tool_log_and_facts(messages) -> tuple[list[dict], dict]:
@@ -91,12 +96,17 @@ def run_case(applicant_id: str) -> dict:
         "messages": [HumanMessage(content=f"{SYSTEM_INSTRUCTION}\n\nApplicant ID: {applicant_id}")]
     })
     messages = result["messages"]
-    final_text = messages[-1].content
 
     tool_log, facts = _extract_tool_log_and_facts(messages)
-    proposed = decision_extractor.invoke(f"Extract the recommendation from this analysis:\n\n{final_text}")
+    proposed = _extract_proposed_decision(messages)
 
-    if None in facts.values():
+    if proposed is None:
+        guardrail_result = {
+            "final_decision": "escalate",
+            "guardrail_triggered": True,
+            "reason": "Incomplete investigation — agent never called submit_decision.",
+        }
+    elif None in facts.values():
         guardrail_result = {
             "final_decision": "escalate",
             "guardrail_triggered": True,
@@ -104,7 +114,7 @@ def run_case(applicant_id: str) -> dict:
         }
     else:
         guardrail_result = enforce_guardrails(
-            proposed_decision=proposed.decision,
+            proposed_decision=proposed["decision"],
             loan_amount=facts["loan_amount"],
             dti=facts["dti"],
             credit_score=facts["credit_score"],
@@ -115,8 +125,8 @@ def run_case(applicant_id: str) -> dict:
         "applicant_id": applicant_id,
         "tool_calls": tool_log,
         "extracted_facts": facts,
-        "proposed_decision": proposed.decision,
-        "proposed_justification": proposed.justification,
+        "proposed_decision": proposed["decision"] if proposed else None,
+        "proposed_justification": proposed["justification"] if proposed else None,
         "final_decision": guardrail_result["final_decision"],
         "guardrail_triggered": guardrail_result["guardrail_triggered"],
         "guardrail_reason": guardrail_result["reason"],
