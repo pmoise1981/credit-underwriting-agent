@@ -15,6 +15,11 @@ on:
 jobs:
   eval:
     runs-on: ubuntu-latest
+    env:
+      # Safe to be generous here: CI has no request/response deadline, unlike
+      # the deployed Lambda (60s timeout, terraform/lambda.tf), which is why
+      # this is opt-in via env var rather than the shared client's default.
+      BEDROCK_MAX_ATTEMPTS: "25"
     steps:
       - uses: actions/checkout@v4
 
