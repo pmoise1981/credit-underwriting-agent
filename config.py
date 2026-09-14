@@ -14,8 +14,20 @@ CREDIT_REPORTS_TABLE = "underwriting-agent-credit-reports"
 DECISIONS_TABLE = "underwriting-agent-decisions"  # audit log of every case the agent processed
 
 # --- Retry config: absorbs Bedrock throttling under burst load (e.g. running
-# many eval cases back-to-back in CI) ---
-BEDROCK_RETRY_CONFIG = Config(retries={"max_attempts": 10, "mode": "adaptive"})
+# many eval cases back-to-back in CI). max_attempts was raised from 10 to 25
+# after a real CI run exhausted 10 attempts under adaptive backoff and still
+# hit ThrottlingException — see EVAL_CALL_PACING_SECONDS below, which reduces
+# how often retries are needed in the first place. Neither fully eliminates
+# throttling if the account's actual Bedrock on-demand throughput is the
+# bottleneck — that requires a quota increase on the AWS side, not a retry
+# policy change.
+BEDROCK_RETRY_CONFIG = Config(retries={"max_attempts": 25, "mode": "adaptive"})
+
+# --- Pacing between sequential eval-suite calls to the same Bedrock account,
+# to keep well under its on-demand rate limit instead of relying on retries
+# to absorb a burst after the fact. Override via env var if a given account's
+# quota allows tighter (or needs looser) pacing. ---
+EVAL_CALL_PACING_SECONDS = float(os.environ.get("EVAL_CALL_PACING_SECONDS", "4"))
 
 # --- LLM ---
 llm = ChatBedrockConverse(

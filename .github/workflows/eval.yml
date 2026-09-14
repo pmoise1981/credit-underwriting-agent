@@ -42,6 +42,12 @@ jobs:
       - name: Run fair lending disparity eval
         run: python eval/fair_lending_eval.py
 
+      - name: Cool down before the next eval suite
+        # Both evals hit the same Bedrock account's on-demand rate limit
+        # back-to-back; a short pause here gives it room to recover instead
+        # of starting the next eval suite already near the throttling edge.
+        run: sleep 15
+
       - name: Run agentic eval suite
         run: python eval/eval_agentic.py
 
