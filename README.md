@@ -2,6 +2,8 @@
 
 # Credit Underwriting Agent
 
+> **Portfolio project — not a production lending system.** Every applicant, credit report, and policy threshold below is synthetic and illustrative (see `data_seed.py` / `config.py`). No real PII, no real credit bureau, no real underwriting decisions. What's real: the architecture, the guardrail enforcement, the CI-gated evals, and the deployment infra — all of which run against this synthetic data end-to-end, live, not mocked.
+
 A genuinely agentic system (the LLM decides which tools to call and when — not a fixed pipeline) that investigates loan applications, proposes a decision, and is subject to a deterministic guardrail layer that can override an unsafe recommendation. Backed by an **automated evaluation suite that runs in CI on every push**, gating merges on agent safety and quality regressions.
 
 All applicant and credit data is **synthetic** — fabricated for demonstration, no real PII.
