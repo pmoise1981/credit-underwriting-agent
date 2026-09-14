@@ -19,7 +19,7 @@ from collections import Counter
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agent import run_case
-from config import llm
+from config import llm, EVAL_CALL_PACING_SECONDS
 from data_seed import MIRRORED_APPLICANTS
 
 DISPARITY_THRESHOLD = 0.80
@@ -102,7 +102,7 @@ def run_fair_lending_eval():
         for _ in range(N_REPEATS):
             result = run_case(applicant_id)
             repeat_decisions.append(result["final_decision"])
-            time.sleep(2)  # pace requests to avoid Bedrock throttling under repeated-run load
+            time.sleep(EVAL_CALL_PACING_SECONDS)  # pace requests to avoid Bedrock throttling under repeated-run load
 
         final_decision, stable = _majority_decision(repeat_decisions)
         if not stable:
