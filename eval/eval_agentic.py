@@ -13,11 +13,13 @@ import sys
 import os
 import json
 import subprocess
+import time
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agent import run_case
+from config import EVAL_CALL_PACING_SECONDS
 from eval_dataset import EVAL_CASES
 
 DECISION_ACCURACY_THRESHOLD = 0.80
@@ -50,6 +52,9 @@ def run_eval():
     for case in EVAL_CASES:
         print(f"Running case: {case['applicant_id']}")
         result = run_case(case["applicant_id"])
+        # This eval runs right after the fair lending eval in CI, against the
+        # same Bedrock account's rate limit, so it paces itself too.
+        time.sleep(EVAL_CALL_PACING_SECONDS)
 
         called_tools = {t["tool"] for t in result["tool_calls"]}
         tool_completeness = 1.0 if case["required_tools"].issubset(called_tools) else 0.0
