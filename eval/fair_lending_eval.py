@@ -7,6 +7,7 @@
 #
 # The agent NEVER sees demographic_group (stripped in tools.py). This eval
 # reads it only from the raw seed data, after decisions are made.
+import time
 import sys
 import os
 import csv
@@ -101,6 +102,7 @@ def run_fair_lending_eval():
         for _ in range(N_REPEATS):
             result = run_case(applicant_id)
             repeat_decisions.append(result["final_decision"])
+            time.sleep(2)  # pace requests to avoid Bedrock throttling under repeated-run load
 
         final_decision, stable = _majority_decision(repeat_decisions)
         if not stable:

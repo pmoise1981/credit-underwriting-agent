@@ -29,6 +29,11 @@ llm = ChatBedrockConverse(
 # Any loan amount at or above this MUST be escalated to a human, regardless of
 # what the agent's own reasoning concludes. This is enforced in guardrails.py,
 # not by asking the model nicely — see README for why that distinction matters.
+# These values are illustrative placeholders for demonstration purposes -- they
+# are NOT sourced from any specific institution actual underwriting policy.
+# A real deployment would replace these with the institution actual credit
+# box, approved by risk/compliance, not hardcoded constants in application code.
+#
 AUTO_APPROVE_MAX_AMOUNT = 50_000
 MAX_DTI_FOR_AUTO_APPROVE = 0.43  # standard qualified-mortgage DTI ceiling
 MIN_CREDIT_SCORE_FOR_AUTO_APPROVE = 680
