@@ -14,8 +14,23 @@ CREDIT_REPORTS_TABLE = "underwriting-agent-credit-reports"
 DECISIONS_TABLE = "underwriting-agent-decisions"  # audit log of every case the agent processed
 
 # --- Retry config: absorbs Bedrock throttling under burst load (e.g. running
-# many eval cases back-to-back in CI) ---
-BEDROCK_RETRY_CONFIG = Config(retries={"max_attempts": 10, "mode": "adaptive"})
+# many eval cases back-to-back in CI). A large retry budget is safe for the
+# eval suite, which has no deadline, but this same `llm` client is also what
+# `lambda_handler.py` uses for real production requests, and that Lambda has
+# a hard 60s timeout (terraform/lambda.tf) — a sustained-throttle retry loop
+# there would get hard-killed by Lambda mid-backoff instead of returning a
+# clean error. So the budget is env-controlled: production (unset) keeps the
+# original conservative default, and CI opts into a much larger one via
+# BEDROCK_MAX_ATTEMPTS (set in .github/workflows/eval.yml) where a long
+# retry loop is fine because nothing is waiting on a request/response cycle.
+BEDROCK_MAX_ATTEMPTS = int(os.environ.get("BEDROCK_MAX_ATTEMPTS", "10"))
+BEDROCK_RETRY_CONFIG = Config(retries={"max_attempts": BEDROCK_MAX_ATTEMPTS, "mode": "adaptive"})
+
+# --- Pacing between sequential eval-suite calls to the same Bedrock account,
+# to keep well under its on-demand rate limit instead of relying on retries
+# to absorb a burst after the fact. Override via env var if a given account's
+# quota allows tighter (or needs looser) pacing. ---
+EVAL_CALL_PACING_SECONDS = float(os.environ.get("EVAL_CALL_PACING_SECONDS", "4"))
 
 # --- LLM ---
 llm = ChatBedrockConverse(
