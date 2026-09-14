@@ -26,8 +26,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run deterministic guardrail unit tests
-        run: python -m pytest eval/test_guardrails.py -v
+      - name: Run deterministic unit tests
+        run: python -m pytest eval/ -v
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
