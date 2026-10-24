@@ -12,6 +12,14 @@ on:
   pull_request:
     branches: [master]
 
+# One eval run per PR at a time: a new push cancels the run already in
+# progress, so superseded commits don't keep making live Bedrock calls and
+# throttle each other (all runs share one account's rate limit and the same
+# DynamoDB tables). Pushes to master are never cancelled.
+concurrency:
+  group: eval-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   eval:
     runs-on: ubuntu-latest

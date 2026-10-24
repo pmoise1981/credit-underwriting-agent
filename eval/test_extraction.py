@@ -137,3 +137,18 @@ def test_scoring(corpus):
 
     failed = score_document(stmt, None)
     assert not any(failed["fields"].values()) and failed["txn_recall"] == 0.0
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("Bi-Weekly", "biweekly"), ("every 2 weeks", "biweekly"), ("Semi-Monthly", "semimonthly"),
+    ("twice a month", "semimonthly"), ("WEEKLY", "weekly"), ("monthly", "monthly"),
+])
+def test_pay_frequency_spellings_normalize(corpus, raw, expected):
+    stub = _first(corpus, PayStub).truth.model_dump()
+    assert PayStub(**{**stub, "pay_frequency": raw}).pay_frequency == expected
+
+
+def test_unknown_pay_frequency_still_rejected(corpus):
+    stub = _first(corpus, PayStub).truth.model_dump()
+    with pytest.raises(ValueError):
+        PayStub(**{**stub, "pay_frequency": "quarterly"})

@@ -8,14 +8,24 @@
 # inconsistency and route the document to a human. A model_validator that
 # rejected the parse would hide that signal; one that "fixed" it would hide it
 # worse.
+import re
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 DocType = Literal["pay_stub", "bank_statement"]
 
 PERIODS_PER_YEAR = {"weekly": 52, "biweekly": 26, "semimonthly": 24, "monthly": 12}
+
+# Spellings documents (and models copying them) use for each pay frequency,
+# keyed after lowercasing and stripping everything but letters and digits.
+_FREQUENCY_ALIASES = {
+    "weekly": "weekly",
+    "biweekly": "biweekly", "every2weeks": "biweekly", "everytwoweeks": "biweekly",
+    "semimonthly": "semimonthly", "twiceamonth": "semimonthly",
+    "monthly": "monthly",
+}
 
 
 class PayStub(BaseModel):
@@ -29,6 +39,15 @@ class PayStub(BaseModel):
     total_deductions: float = Field(description="Total of all deductions for this pay period, as a positive number.")
     net_pay: float = Field(description="Net (take-home) pay for this pay period.")
     ytd_gross_pay: float = Field(description="Year-to-date gross earnings.")
+
+    # Formatting normalization only ("Bi-Weekly" -> "biweekly"), not a
+    # consistency rule: an unrecognized value still fails validation.
+    @field_validator("pay_frequency", mode="before")
+    @classmethod
+    def _normalize_pay_frequency(cls, v):
+        if isinstance(v, str):
+            return _FREQUENCY_ALIASES.get(re.sub(r"[^a-z0-9]", "", v.lower()), v)
+        return v
 
 
 class Transaction(BaseModel):

@@ -120,6 +120,7 @@ def run_eval():
                 violations = validate_document(extracted)
             except Exception as e:  # noqa: BLE001 — a failed extraction is a scored outcome, not a crash
                 extracted, violations, error = None, ["extraction failed"], f"{type(e).__name__}: {e}"
+                print(f"  extraction failed: {error[:300]}")
 
             score = score_document(doc.truth, extracted)
             for field, ok in score["fields"].items():
