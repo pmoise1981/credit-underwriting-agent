@@ -14,7 +14,7 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langgraph.prebuilt import create_react_agent
 
 from config import llm, AWS_REGION, DECISIONS_TABLE
-from tools import get_applicant_profile, get_credit_report, calculate_dti, submit_decision
+from tools import get_applicant_profile, get_credit_report, calculate_dti, verify_income_documents, submit_decision
 from guardrails import enforce_guardrails
 
 _dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
@@ -32,12 +32,13 @@ def _floats_to_decimal(obj):
     return obj
 
 
-TOOLS = [get_applicant_profile, get_credit_report, calculate_dti, submit_decision]
+TOOLS = [get_applicant_profile, get_credit_report, verify_income_documents, calculate_dti, submit_decision]
 react_agent = create_react_agent(llm, tools=TOOLS)
 
 SYSTEM_INSTRUCTION = (
     "You are a loan underwriting assistant. Given an applicant ID, investigate the case: "
-    "fetch the applicant's profile, fetch their credit report, and calculate their DTI ratio. "
+    "fetch the applicant's profile, fetch their credit report, verify their income from their documents, "
+    "and calculate their DTI ratio. "
     "Then call submit_decision, exactly once, as your final action, with ONE recommendation — "
     "'approve', 'decline', or 'escalate' (for cases needing human judgment) — and a one-paragraph "
     "justification. Calling submit_decision IS how you submit your recommendation; do not just "
@@ -66,25 +67,43 @@ def _extract_tool_log_and_facts(messages) -> tuple[list[dict], dict]:
     Tool outputs are clean JSON (tools.py strips Decimal types), so json.loads
     parses reliably here."""
     tool_log = []
-    facts = {"loan_amount": None, "dti": None, "credit_score": None}
+    facts = {"loan_amount": None, "dti": None, "credit_score": None, "monthly_debt": None,
+             "stated_income": None, "verified_income": None, "income_verification_passed": None}
 
     for msg in messages:
         if isinstance(msg, ToolMessage):
             tool_log.append({"tool": msg.name, "output": str(msg.content)})
-            content = str(msg.content).replace("'", '"')  # tolerate either quoting style
+            content = str(msg.content)
             try:
                 parsed = json.loads(content)
             except json.JSONDecodeError:
-                continue
+                # Fallback for single-quoted dict reprs only. Not the first
+                # attempt: real JSON can contain apostrophes (document text,
+                # names), and rewriting them would break a valid parse.
+                try:
+                    parsed = json.loads(content.replace("'", '"'))
+                except json.JSONDecodeError:
+                    continue
 
             if msg.name == "get_applicant_profile" and "loan_amount_requested" in parsed:
                 facts["loan_amount"] = parsed.get("loan_amount_requested")
+                facts["monthly_debt"] = parsed.get("monthly_debt")
+                facts["stated_income"] = parsed.get("annual_income")
+            if msg.name == "verify_income_documents" and "verification_passed" in parsed:
+                facts["income_verification_passed"] = parsed["verification_passed"]
+                facts["verified_income"] = parsed.get("verified_annual_income")
             if msg.name == "get_credit_report" and "credit_score" in parsed:
                 facts["credit_score"] = parsed.get("credit_score")
             if msg.name == "calculate_dti" and "dti" in parsed:
                 facts["dti"] = parsed.get("dti")
 
     return tool_log, facts
+
+
+# verified_income is legitimately None when verification ran but no pay stub
+# could be extracted — guardrails.py handles that. Whether verification ran at
+# all is income_verification_passed.
+REQUIRED_FACTS = ["loan_amount", "dti", "credit_score", "monthly_debt", "stated_income", "income_verification_passed"]
 
 
 def run_case(applicant_id: str) -> dict:
@@ -106,19 +125,14 @@ def run_case(applicant_id: str) -> dict:
             "guardrail_triggered": True,
             "reason": "Incomplete investigation — agent never called submit_decision.",
         }
-    elif None in facts.values():
+    elif missing := [k for k in REQUIRED_FACTS if facts[k] is None]:
         guardrail_result = {
             "final_decision": "escalate",
             "guardrail_triggered": True,
-            "reason": f"Incomplete investigation — missing facts: {[k for k, v in facts.items() if v is None]}",
+            "reason": f"Incomplete investigation — missing facts: {missing}",
         }
     else:
-        guardrail_result = enforce_guardrails(
-            proposed_decision=proposed["decision"],
-            loan_amount=facts["loan_amount"],
-            dti=facts["dti"],
-            credit_score=facts["credit_score"],
-        )
+        guardrail_result = enforce_guardrails(proposed_decision=proposed["decision"], **facts)
 
     case_record = {
         "case_id": case_id,

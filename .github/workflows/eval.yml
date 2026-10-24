@@ -12,6 +12,14 @@ on:
   pull_request:
     branches: [master]
 
+# One eval run per PR at a time: a new push cancels the run already in
+# progress, so superseded commits don't keep making live Bedrock calls and
+# throttle each other (all runs share one account's rate limit and the same
+# DynamoDB tables). Pushes to master are never cancelled.
+concurrency:
+  group: eval-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   eval:
     runs-on: ubuntu-latest
@@ -45,6 +53,10 @@ jobs:
       - name: Run agentic eval suite
         run: python eval/eval_agentic.py
 
+      - name: Run document extraction eval
+        if: always()
+        run: python eval/eval_extraction.py
+
       - name: Upload eval results
         if: always()
         uses: actions/upload-artifact@v4
@@ -59,4 +71,5 @@ jobs:
           path: |
             eval/eval_results.csv
             eval/fair_lending_results.csv
+            eval/extraction_results.csv
             eval/eval_history.jsonl

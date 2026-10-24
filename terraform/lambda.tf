@@ -3,7 +3,7 @@ resource "aws_lambda_function" "app" {
   role          = aws_iam_role.lambda_exec.arn
   package_type  = "Image"
   image_uri     = "${aws_ecr_repository.app.repository_url}:latest"
-  timeout       = 60
+  timeout       = 180 # agent loop + two document extractions per case
   memory_size   = 1024
 
   depends_on = [aws_ecr_repository.app]
