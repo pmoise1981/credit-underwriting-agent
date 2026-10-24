@@ -6,6 +6,23 @@ A genuinely agentic system (the LLM decides which tools to call and when — not
 
 All applicant and credit data is **synthetic** — fabricated for demonstration, no real PII.
 
+## What this project demonstrates
+
+This is built as an applied-AI system, not a model demo: messy financial documents go in, typed and validated data comes out, an agent reasons over it, and deterministic code decides what the agent is allowed to do. Every stage has its own eval, and those evals gate CI.
+
+| Capability | Where it lives |
+|---|---|
+| **Turning inconsistent financial documents into clean, typed, validated data** | `extraction/`: pay stubs and bank statements across three layouts each, with different labels, date formats and negative-amount notations, separate withdrawal/deposit columns, and distractor YTD and running-balance columns. pdfplumber feeds Bedrock structured output into Pydantic schemas, and plain-Python validators check that the numbers reconcile. |
+| **Agentic workflows over fragmented sources, with guardrails to run them safely** | `agent.py` (LangGraph ReAct) pulls from the application, the credit bureau and the applicant's documents. `guardrails.py` can override any "approve", and it recomputes DTI on document-verified income instead of trusting the inputs the agent chose. |
+| **Eval and monitoring as a matter of course** | Three CI-gated evals: agent safety (zero tolerance on unsafe approvals), fair lending (Four-Fifths Rule with a minimum-sample gate and repeat-stability checks), and extraction (accuracy by layout × field, plus the silent error rate). Scores are appended to `eval_history.jsonl` for drift tracking. |
+| **Choosing which metric to trust** | Extraction is gated on *silent errors* (wrong and still passed validation), not just accuracy, because a flagged error costs review time while an unflagged one reaches a decision. False alarms are reported alongside so the validator can't win by flagging everything. The fairness ratio is reported with its sample size and confidence interval, not on its own. |
+| **Avoiding leakage** | The agent never sees `demographic_group`; it is stripped in `tools.py`, and applicant names are deliberately uncorrelated with group. Mirrored Group A/B applicants get documents that are identical except for the name (tested), so an approval gap can't come from the documents. Synthetic ground truth is built first and the PDFs are rendered from it, so the expected answer and the document can't drift apart. |
+| **Systems with no single "correct" answer** | Where "decline" and "escalate" are both defensible, the eval scores the safety property (never auto-approve) instead of an exact label. The fairness eval measures disparity, not accuracy. |
+| **Knowing when a simpler approach wins** | Hard limits, document reconciliation and fact extraction are plain Python, not prompts. The decision is captured from a real tool call, not by re-parsing prose with a second LLM call. The LLM does only what needs an LLM: reading unstructured documents and weighing a case. |
+| **Production, not a notebook** | Terraform (DynamoDB, Lambda, ECR, IAM), a container image, an audit log of every decision, and Bedrock throttling handled with adaptive retry plus pacing. |
+
+**Not covered here:** time-series forecasting. This project has no forecasting component.
+
 ## Why this is different from a RAG project
 
 A RAG system answers questions from retrieved text. This system **takes actions with consequences** — it investigates a real case and recommends approve/decline/escalate. That's a different, harder governance problem: a bad retrieval gives a bad answer; a bad agent decision could authorize a loan that shouldn't be authorized. The guardrail layer exists specifically to make that failure mode structurally impossible, not just unlikely.
