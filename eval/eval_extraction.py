@@ -8,6 +8,9 @@
 #      averaged away.
 #   2. Transaction precision/recall — bank statements only, matched on
 #      (date, amount) as a multiset, so a dropped or duplicated line counts.
+#      Descriptions are scored separately on the matched lines, so a misread
+#      description lowers description accuracy without also being counted as
+#      a missing transaction.
 #   3. Silent error rate (the one that matters most) — documents that were
 #      extracted WRONG and still passed validators.py. A wrong-but-flagged
 #      document goes to a human and costs time; a wrong-and-unflagged one
@@ -61,17 +64,27 @@ def score_document(truth, extracted) -> dict:
         for name in type(truth).model_fields
         if name != "transactions"
     }
-    score = {"fields": field_results, "txn_precision": None, "txn_recall": None}
+    score = {"fields": field_results, "txn_precision": None, "txn_recall": None, "txn_description_accuracy": None}
 
     if isinstance(truth, BankStatement):
-        expected = Counter((t.date, round(t.amount, 2)) for t in truth.transactions)
-        got = Counter((t.date, round(t.amount, 2)) for t in extracted.transactions) if extracted else Counter()
-        matched = sum((expected & got).values())
-        score["txn_precision"] = matched / sum(got.values()) if got else 0.0
-        score["txn_recall"] = matched / sum(expected.values())
+        def by_key(txns):
+            grouped = defaultdict(Counter)
+            for t in txns:
+                grouped[(t.date, round(t.amount, 2))][" ".join(t.description.split()).casefold()] += 1
+            return grouped
 
-    score["fully_correct"] = all(field_results.values()) and score["txn_recall"] in (None, 1.0) \
-        and score["txn_precision"] in (None, 1.0)
+        expected = by_key(truth.transactions)
+        got = by_key(extracted.transactions) if extracted else {}
+        matched = sum(min(sum(expected[k].values()), sum(got[k].values())) for k in expected.keys() & got.keys())
+        n_got = sum(sum(c.values()) for c in got.values())
+        score["txn_precision"] = matched / n_got if n_got else 0.0
+        score["txn_recall"] = matched / len(truth.transactions)
+        # Among (date, amount)-matched lines, how many descriptions also match.
+        described = sum(sum((expected[k] & got[k]).values()) for k in expected.keys() & got.keys())
+        score["txn_description_accuracy"] = described / matched if matched else 0.0
+
+    score["fully_correct"] = all(field_results.values()) and all(
+        score[k] in (None, 1.0) for k in ("txn_precision", "txn_recall", "txn_description_accuracy"))
     return score
 
 
@@ -120,6 +133,7 @@ def run_eval():
                 "wrong_fields": ";".join(f for f, ok in score["fields"].items() if not ok),
                 "txn_precision": score["txn_precision"],
                 "txn_recall": score["txn_recall"],
+                "txn_description_accuracy": score["txn_description_accuracy"],
                 "fully_correct": score["fully_correct"],
                 "flagged_by_validator": flagged,
                 "silent_error": not score["fully_correct"] and not flagged,
@@ -140,6 +154,7 @@ def run_eval():
     txn_p = sum(r["txn_precision"] for r in bank_rows) / len(bank_rows)
     txn_r = sum(r["txn_recall"] for r in bank_rows) / len(bank_rows)
     txn_f1 = _f1(txn_p, txn_r)
+    txn_desc = sum(r["txn_description_accuracy"] for r in bank_rows) / len(bank_rows)
     silent_rate = sum(r["silent_error"] for r in rows) / len(rows)
     false_alarm_rate = sum(r["false_alarm"] for r in rows) / len(rows)
 
@@ -159,10 +174,12 @@ def run_eval():
     print(f"Documents:              {len(rows)}")
     print(f"Field accuracy:         {field_accuracy:.3f} (threshold: {FIELD_ACCURACY_THRESHOLD})")
     print(f"Transaction P / R / F1: {txn_p:.3f} / {txn_r:.3f} / {txn_f1:.3f} (F1 threshold: {TRANSACTION_F1_THRESHOLD})")
+    print(f"Txn description acc.:   {txn_desc:.3f} (reported; errors count toward silent error rate)")
     print(f"Silent error rate:      {silent_rate:.3f} (threshold: {SILENT_ERROR_RATE_THRESHOLD})")
     print(f"False alarm rate:       {false_alarm_rate:.3f} (reported, not gated)")
 
     _log_run_history({"documents": len(rows), "field_accuracy": field_accuracy, "txn_f1": txn_f1,
+                      "txn_description_accuracy": txn_desc,
                       "silent_error_rate": silent_rate, "false_alarm_rate": false_alarm_rate})
 
     failed = False

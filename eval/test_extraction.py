@@ -123,5 +123,17 @@ def test_scoring(corpus):
     assert dropped["txn_precision"] == 1.0 and dropped["txn_recall"] < 1.0
     assert not dropped["fully_correct"]
 
+    t0 = stmt.transactions[0]
+    misdescribed = stmt.model_copy(update={
+        "transactions": [t0.model_copy(update={"description": "SOMETHING ELSE"})] + stmt.transactions[1:]})
+    wrong_desc = score_document(stmt, misdescribed)
+    assert wrong_desc["txn_precision"] == 1.0 and wrong_desc["txn_recall"] == 1.0
+    assert wrong_desc["txn_description_accuracy"] < 1.0
+    assert not wrong_desc["fully_correct"]
+
+    reformatted = stmt.model_copy(update={
+        "transactions": [t0.model_copy(update={"description": "  " + t0.description.lower()})] + stmt.transactions[1:]})
+    assert score_document(stmt, reformatted)["fully_correct"]
+
     failed = score_document(stmt, None)
     assert not any(failed["fields"].values()) and failed["txn_recall"] == 0.0

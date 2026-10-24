@@ -158,7 +158,7 @@ PDF (pay stub / bank statement)
 Metrics, all broken down by doc type × layout × field:
 
 1. **Field accuracy** (threshold 0.95).
-2. **Transaction precision / recall** (F1 threshold 0.95). Lines are matched on (date, amount) as a multiset, so a dropped or duplicated line counts.
+2. **Transaction precision / recall** (F1 threshold 0.95). Lines are matched on (date, amount) as a multiset, so a dropped or duplicated line counts. Descriptions are scored separately on the matched lines, and any description error also makes the document count as incorrect for the silent error rate.
 3. **Silent error rate** (threshold 0.05): documents extracted *wrong* that still passed validation. This is the safety metric. A flagged error costs a human some time, while an unflagged one flows into a decision. The **false alarm rate** is reported alongside it, because a validator that flags everything would score zero silent errors and be useless.
 
 The thresholds are a first cut, not a measured baseline, and no live run has been recorded yet. Validators can only catch errors that break the arithmetic; a misspelled employer name stays consistent, which is why field accuracy is measured separately. `eval/test_extraction.py` covers the parts that need no LLM: ground truth passes validation, every PDF actually contains its values, each corruption type (dropped/duplicated line, sign flip, YTD-as-current, misread total) is flagged, and the scoring counts errors correctly.
