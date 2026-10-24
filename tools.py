@@ -9,6 +9,8 @@ import json
 import boto3
 from langchain_core.tools import tool
 from config import AWS_REGION, APPLICANTS_TABLE, CREDIT_REPORTS_TABLE
+from extraction.documents import get_applicant_documents
+from extraction.income_verification import verify_income
 
 _dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
 
@@ -53,6 +55,19 @@ def calculate_dti(monthly_debt: float, annual_income: float) -> str:
     monthly_income = annual_income / 12
     dti = round(monthly_debt / monthly_income, 4)
     return json.dumps({"dti": dti, "monthly_income": round(monthly_income, 2)})
+
+
+@tool
+def verify_income_documents(applicant_id: str) -> str:
+    """Extracts the applicant's pay stub and bank statement, checks them for
+    internal consistency and against each other, and returns the income the
+    documents actually support (verified_annual_income) plus any issues found."""
+    table = _dynamodb.Table(APPLICANTS_TABLE)
+    applicant = table.get_item(Key={"applicant_id": applicant_id}).get("Item")
+    if applicant is None:
+        return json.dumps({"error": f"No applicant found for {applicant_id}"})
+    result = verify_income(applicant["name"], get_applicant_documents(applicant_id))
+    return json.dumps(result)
 
 
 @tool

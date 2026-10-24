@@ -41,7 +41,15 @@ All applicant/credit data is synthetic. No real PII.
    rather than reporting a falsely-precise ratio on too few cases. Supports
    `EVAL_N_REPEATS` env var to check run-to-run decision stability (LLM
    outputs are not perfectly deterministic even at temperature=0).
-8. `extraction/` — document extraction layer (not yet wired into the agent).
+8. `extraction/` — document extraction layer, used by the agent through the
+   `verify_income_documents` tool (`income_verification.py`: validate each
+   document, cross-check names and pay-stub net pay vs. bank deposits).
+   `guardrails.py` enforces the result: failed verification, stated income
+   > verified by `INCOME_DISCREPANCY_TOLERANCE`, or DTI on verified income
+   over the ceiling all block auto-approval. Applicant documents come from
+   `data_seed.DOCUMENT_SPECS` via `documents.py`; mirrored Group A/B
+   applicants MUST share a `seed_key` so their documents differ only by name
+   (tested in `eval/test_income_verification.py`).
    `synth.py` renders synthetic pay stubs / bank statements in three layouts
    with ground truth; `extractor.py` does pdfplumber text -> Bedrock
    structured output into `schemas.py`; `validators.py` is deterministic

@@ -19,7 +19,7 @@ from extraction.schemas import BankStatement, PayStub
 MONEY_TOLERANCE = 0.005
 
 
-def _money_eq(a: float, b: float) -> bool:
+def money_eq(a: float, b: float) -> bool:
     return math.isclose(a, b, abs_tol=MONEY_TOLERANCE)
 
 
@@ -29,7 +29,7 @@ def validate_pay_stub(stub: PayStub) -> list[str]:
         violations.append(
             f"date order: period {stub.pay_period_start}..{stub.pay_period_end}, paid {stub.pay_date}"
         )
-    if not _money_eq(stub.gross_pay - stub.total_deductions, stub.net_pay):
+    if not money_eq(stub.gross_pay - stub.total_deductions, stub.net_pay):
         violations.append(
             f"gross {stub.gross_pay:.2f} - deductions {stub.total_deductions:.2f} != net {stub.net_pay:.2f}"
         )
@@ -50,17 +50,17 @@ def validate_bank_statement(stmt: BankStatement) -> list[str]:
         violations.append(f"{len(outside)} transaction(s) dated outside the statement period")
 
     net = sum(t.amount for t in stmt.transactions)
-    if not _money_eq(stmt.opening_balance + net, stmt.closing_balance):
+    if not money_eq(stmt.opening_balance + net, stmt.closing_balance):
         violations.append(
             f"opening {stmt.opening_balance:.2f} + transactions {net:.2f} != closing {stmt.closing_balance:.2f}"
         )
 
     deposits = sum(t.amount for t in stmt.transactions if t.amount > 0)
-    if not _money_eq(deposits, stmt.total_deposits):
+    if not money_eq(deposits, stmt.total_deposits):
         violations.append(f"sum of deposits {deposits:.2f} != stated total {stmt.total_deposits:.2f}")
 
     withdrawals = -sum(t.amount for t in stmt.transactions if t.amount < 0)
-    if not _money_eq(withdrawals, stmt.total_withdrawals):
+    if not money_eq(withdrawals, stmt.total_withdrawals):
         violations.append(f"sum of withdrawals {withdrawals:.2f} != stated total {stmt.total_withdrawals:.2f}")
     return violations
 

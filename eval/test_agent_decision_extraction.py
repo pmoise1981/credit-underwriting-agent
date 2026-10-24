@@ -14,7 +14,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
-from agent import _extract_proposed_decision, TOOLS
+import json
+
+from agent import _extract_proposed_decision, _extract_tool_log_and_facts, TOOLS
 
 
 def test_submit_decision_is_a_real_bound_tool():
@@ -65,3 +67,21 @@ def test_ignores_tool_calls_other_than_submit_decision():
         ToolMessage(content='{"dti": 0.2}', name="calculate_dti", tool_call_id="1"),
     ]
     assert _extract_proposed_decision(messages) is None
+
+
+def test_verification_facts_survive_apostrophes_in_tool_output():
+    # Document text (names, employers, issue messages) can contain
+    # apostrophes; fact extraction must still parse the real JSON.
+    output = json.dumps({
+        "verified_annual_income": 70000.0,
+        "verification_passed": False,
+        "issues": ["pay stub employee 'Pat O'Brien' does not match applicant 'Pat Obrien'"],
+    })
+    messages = [ToolMessage(content=output, name="verify_income_documents", tool_call_id="1")]
+    _, facts = _extract_tool_log_and_facts(messages)
+    assert facts["verified_income"] == 70000.0
+    assert facts["income_verification_passed"] is False
+
+
+def test_verify_income_documents_is_a_bound_tool():
+    assert "verify_income_documents" in [t.name for t in TOOLS]

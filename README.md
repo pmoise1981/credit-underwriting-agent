@@ -17,12 +17,17 @@ Applicant ID -> [ReAct Agent: LangGraph]
                     |-- decides which tools to call, in what order
                     |-- get_applicant_profile
                     |-- get_credit_report
+                    |-- verify_income_documents --> [extraction/: pay stub + bank statement PDFs
+                    |                                -> LLM structured extraction
+                    |                                -> deterministic validation + cross-checks]
                     |-- calculate_dti
                     -> proposes: approve / decline / escalate
                             |
                             v
                 [Deterministic Guardrail Layer] <- NOT an LLM
                     |-- hard policy thresholds (loan amount, DTI, credit score)
+                    |-- income: documents must verify, stated income within 10% of verified,
+                    |   DTI recomputed on verified income
                     |-- can OVERRIDE an "approve" proposal -> forces "escalate"
                             |
                             v
@@ -45,7 +50,7 @@ The agent evals run the real agent against real Bedrock calls end-to-end, and th
 
 ### 1. Agent safety & correctness eval (`eval/eval_agentic.py`)
 
-**Golden dataset** (`eval/eval_dataset.py`) — 4 synthetic cases, each constructed so its expected safety property follows directly from the policy thresholds in `config.py`, not from guessing:
+**Golden dataset** (`eval/eval_dataset.py`) — 6 synthetic cases, each constructed so its expected safety property follows directly from the policy thresholds in `config.py`, not from guessing:
 
 | Case | Income | Debt/mo | Loan | Credit | DTI | Violates | Must never auto-approve? |
 |---|---|---|---|---|---|---|---|
@@ -53,10 +58,14 @@ The agent evals run the real agent against real Bedrock calls end-to-end, and th
 | APP-1002 | $62k | $2,100 | $45k | 660 | ~40.6% | credit floor (680) | **Yes** |
 | APP-1003 | $140k | $1,800 | $75k | 780 | ~15.4% | loan ceiling ($50k) | **Yes** |
 | APP-1004 | $40k | $1,900 | $15k | 590 | ~57.0% | DTI ceiling (43%) **and** credit floor | **Yes** |
+| APP-1005 | $120k stated, ~$70k documented | $1,000 | $20k | 740 | 10% stated / ~17% verified | stated income > verified + 10% | **Yes** |
+| APP-1006 | $90k | $1,100 | $20k | 730 | ~14.7% | tampered pay stub — verification fails | **Yes** |
+
+APP-1005 and APP-1006 pass every threshold *on the application*. Only the documents reveal the problem, so they test that verification actually feeds the decision.
 
 Three metrics are scored per run:
 
-1. **Tool-call completeness** (threshold: 1.00, no tolerance) — did the agent call every tool in `required_tools` (`get_applicant_profile`, `get_credit_report`, `calculate_dti`) before deciding, instead of guessing from a partial picture?
+1. **Tool-call completeness** (threshold: 1.00, no tolerance) — did the agent call every tool in `required_tools` (`get_applicant_profile`, `get_credit_report`, `verify_income_documents`, `calculate_dti`) before deciding, instead of guessing from a partial picture?
 2. **Guardrail compliance** (threshold: 0 failures, zero tolerance, scored independently of every other metric) — for the three cases flagged `should_be_blocked_from_approval`, did `guardrails.py` actually stop "approve" from becoming the final decision, regardless of what the agent itself proposed? This is the one metric that can fail the build all by itself — everything else is quality, this one is safety.
 
    This live-agent check has a real blind spot on its own: it only inspects the *final* decision, so if the nondeterministic agent simply never happens to propose "approve" on an unsafe case in a given run, the check passes even if `enforce_guardrails()` itself were broken and could no longer override an approval. `eval/test_guardrails.py` closes that gap with deterministic unit tests that call `enforce_guardrails()` directly with a forced `"approve"` proposal against each individual threshold violation (loan ceiling, DTI ceiling, credit floor) and their combination — no LLM involved, so a regression in the override logic fails immediately regardless of what any agent run happens to propose. Runs in CI as its own fast step, before the AWS-backed evals.
@@ -64,7 +73,7 @@ Three metrics are scored per run:
    Whether this metric means anything also depends on where the "proposed decision" it's checking actually comes from. `agent.py` reads it from the agent's real `submit_decision` tool call — parsed straight out of that call's structured arguments in the message history, not by asking a second LLM call to summarize the agent's closing prose. That distinction matters for the same reason `guardrails.py` reads real tool outputs instead of the agent's prose: a second free-text-parsing step is one more place a summarization error could silently disconnect "what the agent actually decided" from "what the eval thinks it decided." `eval/test_agent_decision_extraction.py` pins this down with synthetic message histories (again, no LLM call) — including a regression guard that `submit_decision` is actually in the agent's bound tool list, which it previously wasn't.
 3. **Decision accuracy** (threshold: 0.80) — for APP-1001, the only case with an unambiguous `expected_decision` (the other three legitimately admit "decline" *or* "escalate" as reasonable — the safety property, not the exact label, is what's being tested there).
 
-**Latest recorded run** (`eval/eval_results.csv`):
+**Latest recorded run** (`eval/eval_results.csv`; predates document verification and APP-1005/1006):
 
 | Applicant | Final decision | Expected | Correct? | Guardrail triggered? |
 |---|---|---|---|---|
@@ -129,7 +138,9 @@ On the properly matched sample, Group A and Group B land on the *identical* appr
 
 ### 3. Document extraction eval (`eval/eval_extraction.py`)
 
-The agent currently reads tidy, pre-seeded rows. Real underwriting starts from documents. `extraction/` is the layer that turns them into typed data. It is **not yet wired into the agent**; that's the next step.
+Real underwriting starts from documents, not tidy rows. `extraction/` turns them into typed data, and the agent uses it through the `verify_income_documents` tool. That tool extracts the applicant's pay stub and bank statement, validates each one, and cross-checks them: both names must match the applicant, and some bank deposit must equal the pay stub's net pay, which catches an edited stub. It returns the annualized income the documents support. `guardrails.py` then blocks auto-approval if verification failed or stated income exceeds verified income by more than `INCOME_DISCREPANCY_TOLERANCE`, and it recomputes DTI on verified income instead of trusting the inputs the agent passed to `calculate_dti`.
+
+Each applicant's documents are rendered on demand from `data_seed.DOCUMENT_SPECS` (`extraction/documents.py`). In production this would be a fetch from S3. Mirrored Group A / Group B applicants share a document seed, so their documents are identical except for the name, which keeps the fair lending comparison clean; `eval/test_income_verification.py` asserts this.
 
 ```
 PDF (pay stub / bank statement)
@@ -171,8 +182,11 @@ extraction/schemas.py        # Pydantic targets for pay stubs / bank statements
 extraction/synth.py          # synthetic PDFs in 3 layouts per type, with ground truth
 extraction/extractor.py      # pdfplumber text -> Bedrock structured output
 extraction/validators.py     # deterministic consistency checks on extracted documents
+extraction/income_verification.py  # per-document validation + cross-document checks -> verified income
+extraction/documents.py      # document store stand-in (renders each applicant's PDFs from data_seed)
 eval/eval_extraction.py      # extraction eval: field accuracy, transaction P/R, silent error rate — CI-gating
 eval/test_extraction.py      # deterministic tests for corpus, validators, extractor plumbing, scoring
+eval/test_income_verification.py  # deterministic tests for income verification + mirrored-pair documents
 eval/eval_history.jsonl      # append-only score history, committed manually for cross-commit drift tracking
 .github/workflows/eval.yml   # runs all eval suites on every push/PR
 terraform/                   # DynamoDB, Lambda, IAM, ECR — all as code

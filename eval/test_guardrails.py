@@ -13,12 +13,21 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from guardrails import enforce_guardrails
-from config import AUTO_APPROVE_MAX_AMOUNT, MAX_DTI_FOR_AUTO_APPROVE, MIN_CREDIT_SCORE_FOR_AUTO_APPROVE
+from config import (
+    AUTO_APPROVE_MAX_AMOUNT,
+    INCOME_DISCREPANCY_TOLERANCE,
+    MAX_DTI_FOR_AUTO_APPROVE,
+    MIN_CREDIT_SCORE_FOR_AUTO_APPROVE,
+)
 
 SAFE = {
     "loan_amount": AUTO_APPROVE_MAX_AMOUNT - 1000,
     "dti": MAX_DTI_FOR_AUTO_APPROVE - 0.01,
     "credit_score": MIN_CREDIT_SCORE_FOR_AUTO_APPROVE + 10,
+    "monthly_debt": 1000,
+    "stated_income": 60000,
+    "verified_income": 60000,
+    "income_verification_passed": True,
 }
 
 
@@ -49,7 +58,10 @@ def test_credit_score_below_floor_overrides_approve():
 
 
 def test_multiple_violations_still_override_approve():
-    result = enforce_guardrails(proposed_decision="approve", loan_amount=AUTO_APPROVE_MAX_AMOUNT * 2, dti=0.9, credit_score=500)
+    result = enforce_guardrails(
+        proposed_decision="approve",
+        **{**SAFE, "loan_amount": AUTO_APPROVE_MAX_AMOUNT * 2, "dti": 0.9, "credit_score": 500},
+    )
     assert result["final_decision"] != "approve"
     assert result["guardrail_triggered"] is True
 
@@ -61,3 +73,36 @@ def test_violation_without_approve_proposal_is_not_overridden():
     result = enforce_guardrails(proposed_decision="decline", **{**SAFE, "credit_score": 500})
     assert result["final_decision"] == "decline"
     assert result["guardrail_triggered"] is False
+
+
+# --- document-verified income ------------------------------------------------
+
+def _assert_overrides_approve(**overrides):
+    result = enforce_guardrails(proposed_decision="approve", **{**SAFE, **overrides})
+    assert result["final_decision"] != "approve"
+    assert result["guardrail_triggered"] is True
+
+
+def test_failed_income_verification_overrides_approve():
+    _assert_overrides_approve(income_verification_passed=False)
+
+
+def test_missing_verified_income_overrides_approve():
+    _assert_overrides_approve(verified_income=None)
+
+
+def test_stated_income_above_verified_overrides_approve():
+    _assert_overrides_approve(stated_income=SAFE["verified_income"] * (1 + INCOME_DISCREPANCY_TOLERANCE) + 1)
+
+
+def test_stated_income_within_tolerance_stands():
+    stated = SAFE["verified_income"] * (1 + INCOME_DISCREPANCY_TOLERANCE)
+    result = enforce_guardrails(proposed_decision="approve", **{**SAFE, "stated_income": stated})
+    assert result["final_decision"] == "approve"
+
+
+def test_dti_recomputed_on_verified_income_overrides_approve():
+    # The agent's own DTI (computed from whatever income it passed to
+    # calculate_dti) looks fine, but on the income the documents support it
+    # doesn't: $1,000/mo debt on $25k verified income is 48%.
+    _assert_overrides_approve(dti=0.10, stated_income=25000, verified_income=25000)

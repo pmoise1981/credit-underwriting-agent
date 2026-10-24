@@ -25,12 +25,11 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from extraction.schemas import BankStatement, DocType, PayStub, Transaction
+from extraction.schemas import PERIODS_PER_YEAR, BankStatement, DocType, PayStub, Transaction
 
 LAYOUTS = ("classic", "compact", "columns")
 YEAR = 2026
 
-_PERIODS_PER_YEAR = {"weekly": 52, "biweekly": 26, "semimonthly": 24, "monthly": 12}
 _STYLES = getSampleStyleSheet()
 
 
@@ -64,9 +63,9 @@ class PayStubTruth:
 
 def make_pay_stub_truth(fake: Faker, rng: random.Random, annual_income: float | None = None,
                         employee_name: str | None = None) -> PayStubTruth:
-    freq = rng.choice(list(_PERIODS_PER_YEAR))
+    freq = rng.choice(list(PERIODS_PER_YEAR))
     annual_income = annual_income or rng.randrange(40_000, 150_000, 500)
-    gross = round(annual_income / _PERIODS_PER_YEAR[freq], 2)
+    gross = round(annual_income / PERIODS_PER_YEAR[freq], 2)
 
     month = rng.randint(2, 11)
     if freq == "monthly":
@@ -301,6 +300,38 @@ def generate_corpus(out_dir: str | Path, docs_per_layout: int = 4, seed: int = 0
         for doc in docs:
             f.write(json.dumps({"doc_id": doc.doc_id, "doc_type": doc.doc_type, "layout": doc.layout,
                                 "pdf": doc.pdf_path.name, "truth": doc.truth.model_dump(mode="json")}) + "\n")
+    return docs
+
+
+def make_applicant_documents(out_dir: str | Path, seed_key: str, applicant_name: str,
+                             documented_annual_income: float, stub_layout: str, bank_layout: str,
+                             tamper_pay_stub: bool = False) -> dict[str, SynthDoc]:
+    """Renders one applicant's pay stub + bank statement. Everything except the
+    name is driven by seed_key, so two applicants given the same seed_key get
+    identical documents apart from the name — which the fair lending eval
+    relies on for its mirrored pairs.
+
+    tamper_pay_stub raises the stated net pay after the fact, the way an edited
+    stub would look: the stub no longer adds up, and no bank deposit matches it.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rng = random.Random(seed_key)
+    fake = Faker()
+    fake.seed_instance(seed_key)
+
+    t = make_pay_stub_truth(fake, rng, annual_income=documented_annual_income, employee_name=applicant_name)
+    deposited = t.stub.net_pay
+    if tamper_pay_stub:
+        t.stub = t.stub.model_copy(update={"net_pay": round(t.stub.net_pay + 250, 2)})
+    stmt = make_bank_statement_truth(fake, rng, account_holder=applicant_name, payroll_amount=deposited)
+
+    docs = {
+        "pay_stub": SynthDoc("pay_stub", "pay_stub", stub_layout, out_dir / "pay_stub.pdf", t.stub),
+        "bank_statement": SynthDoc("bank_statement", "bank_statement", bank_layout, out_dir / "bank_statement.pdf", stmt),
+    }
+    render_pdf(docs["pay_stub"].pdf_path, _render_pay_stub(t, stub_layout, fake))
+    render_pdf(docs["bank_statement"].pdf_path, _render_bank_statement(stmt, bank_layout, fake))
     return docs
 
 

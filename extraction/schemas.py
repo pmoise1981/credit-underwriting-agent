@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field
 
 DocType = Literal["pay_stub", "bank_statement"]
 
+PERIODS_PER_YEAR = {"weekly": 52, "biweekly": 26, "semimonthly": 24, "monthly": 12}
+
 
 class PayStub(BaseModel):
     employer_name: str

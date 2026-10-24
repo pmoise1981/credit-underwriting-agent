@@ -37,3 +37,6 @@ llm = ChatBedrockConverse(
 AUTO_APPROVE_MAX_AMOUNT = 50_000
 MAX_DTI_FOR_AUTO_APPROVE = 0.43  # standard qualified-mortgage DTI ceiling
 MIN_CREDIT_SCORE_FOR_AUTO_APPROVE = 680
+# Stated income may exceed income verified from documents by at most this
+# fraction before auto-approval is blocked (same placeholder caveat as above).
+INCOME_DISCREPANCY_TOLERANCE = 0.10
