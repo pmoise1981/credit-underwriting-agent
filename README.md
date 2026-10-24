@@ -33,14 +33,15 @@ Applicant ID -> [ReAct Agent: LangGraph]
 
 ## Evaluation (the actual point of this project)
 
-Two independent, CI-gated evals run on every push (`.github/workflows/eval.yml`). Neither is a script you have to remember to run — a failure in either one fails the GitHub Actions job, which branch protection can mark as a required check.
+Three independent, CI-gated evals run on every push (`.github/workflows/eval.yml`). Neither is a script you have to remember to run — a failure in any one fails the GitHub Actions job, which branch protection can mark as a required check.
 
 | Eval | File | Question it answers | Gate type |
 |---|---|---|---|
 | Agent safety & correctness | `eval/eval_agentic.py` | Did the agent investigate fully, decide correctly, and never get an unsafe auto-approval past the guardrail? | Zero-tolerance + threshold |
 | Fair lending disparity | `eval/fair_lending_eval.py` | Does the agent's approval rate differ by protected group when the underlying risk data is identical? | Four-Fifths Rule threshold |
+| Document extraction | `eval/eval_extraction.py` | Are pay stubs and bank statements extracted correctly, and do wrong extractions get caught before they're used? | Threshold (silent errors, field accuracy, transaction F1) |
 
-Both evals run the real agent against real Bedrock calls end-to-end (no mocking of the LLM) — a mocked eval would validate the harness, not the agent.
+The agent evals run the real agent against real Bedrock calls end-to-end, and the extraction eval runs the real extractor (no mocking of the LLM) — a mocked eval would validate the harness, not the agent.
 
 ### 1. Agent safety & correctness eval (`eval/eval_agentic.py`)
 
@@ -126,6 +127,31 @@ On the properly matched sample, Group A and Group B land on the *identical* appr
 - **n=12/group is a floor, not a target.** As shown above, the current sample can rule out only large disparities; a real compliance program would run this against a much larger case set before relying on the number.
 - **Screen, not a legal determination.** The Four-Fifths Rule is a widely used first-pass regulatory screen, not a finding of disparate impact on its own — the eval's own output says this explicitly.
 
+### 3. Document extraction eval (`eval/eval_extraction.py`)
+
+The agent currently reads tidy, pre-seeded rows. Real underwriting starts from documents. `extraction/` is the layer that turns them into typed data. It is **not yet wired into the agent**; that's the next step.
+
+```
+PDF (pay stub / bank statement)
+  -> pdfplumber text (layout mode, so column position survives)
+  -> Bedrock structured output -> Pydantic schema (extraction/schemas.py)
+  -> deterministic validators (extraction/validators.py)   <- NOT an LLM
+       passes -> usable facts
+       fails  -> human review
+```
+
+**Synthetic corpus** (`extraction/synth.py`): pay stubs and bank statements generated with Faker and rendered with reportlab in three layouts per type. The layouts differ the way real ones do: label wording ("Net Pay" / "Take Home"), date format, money notation (`-$45.00`, `(45.00)`, `45.00-`), separate withdrawal/deposit columns where the column carries the sign, and distractor columns (YTD deductions, running balance). Ground truth is built first as the schema object and then rendered, so the document and the expected answer can't drift apart. The corpus is seeded and byte-for-byte reproducible.
+
+**Validators** are to extraction what `guardrails.py` is to decisions. They check gross − deductions = net, YTD ≥ current, opening + transactions = closing, that deposit/withdrawal totals match the line items, and that dates are ordered and inside the period. The schemas deliberately have *no* cross-field rules: the LLM is told to extract what the document says, not to fix it, so an inconsistency surfaces as a validator flag instead of being silently "corrected".
+
+Metrics, all broken down by doc type × layout × field:
+
+1. **Field accuracy** (threshold 0.95).
+2. **Transaction precision / recall** (F1 threshold 0.95). Lines are matched on (date, amount) as a multiset, so a dropped or duplicated line counts.
+3. **Silent error rate** (threshold 0.05): documents extracted *wrong* that still passed validation. This is the safety metric. A flagged error costs a human some time, while an unflagged one flows into a decision. The **false alarm rate** is reported alongside it, because a validator that flags everything would score zero silent errors and be useless.
+
+The thresholds are a first cut, not a measured baseline, and no live run has been recorded yet. Validators can only catch errors that break the arithmetic; a misspelled employer name stays consistent, which is why field accuracy is measured separately. `eval/test_extraction.py` covers the parts that need no LLM: ground truth passes validation, every PDF actually contains its values, each corruption type (dropped/duplicated line, sign flip, YTD-as-current, misread total) is flagged, and the scoring counts errors correctly.
+
 ## Project structure
 
 ```
@@ -141,8 +167,14 @@ eval/eval_agentic.py         # safety/correctness eval — CI-gating (live agent
 eval/test_guardrails.py               # deterministic pytest unit tests for guardrails.py — CI-gating, no LLM calls
 eval/test_agent_decision_extraction.py  # deterministic pytest unit tests for agent.py's decision extraction
 eval/fair_lending_eval.py    # Four-Fifths Rule disparity eval — CI-gating
+extraction/schemas.py        # Pydantic targets for pay stubs / bank statements
+extraction/synth.py          # synthetic PDFs in 3 layouts per type, with ground truth
+extraction/extractor.py      # pdfplumber text -> Bedrock structured output
+extraction/validators.py     # deterministic consistency checks on extracted documents
+eval/eval_extraction.py      # extraction eval: field accuracy, transaction P/R, silent error rate — CI-gating
+eval/test_extraction.py      # deterministic tests for corpus, validators, extractor plumbing, scoring
 eval/eval_history.jsonl      # append-only score history, committed manually for cross-commit drift tracking
-.github/workflows/eval.yml   # runs both eval suites on every push/PR
+.github/workflows/eval.yml   # runs all eval suites on every push/PR
 terraform/                   # DynamoDB, Lambda, IAM, ECR — all as code
 ```
 
@@ -156,6 +188,9 @@ python main.py                             # run one case
 python eval/eval_agentic.py                # safety/correctness eval (live agent runs)
 python eval/fair_lending_eval.py           # fairness eval (single run — point estimate only)
 EVAL_N_REPEATS=5 python eval/fair_lending_eval.py   # + run-to-run stability check
+python -m extraction.synth                 # write sample synthetic PDFs to extraction/sample_docs/
+python eval/eval_extraction.py             # extraction eval (EXTRACTION_DOCS_PER_LAYOUT=4 -> 24 docs)
+python -m extraction.extractor extraction/sample_docs/pay_stub-classic-00.pdf --type pay_stub
 ```
 
 Full AWS deploy:

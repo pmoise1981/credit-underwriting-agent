@@ -41,7 +41,16 @@ All applicant/credit data is synthetic. No real PII.
    rather than reporting a falsely-precise ratio on too few cases. Supports
    `EVAL_N_REPEATS` env var to check run-to-run decision stability (LLM
    outputs are not perfectly deterministic even at temperature=0).
-8. `.github/workflows/eval.yml` — runs both evals on every push to `master`
+8. `extraction/` — document extraction layer (not yet wired into the agent).
+   `synth.py` renders synthetic pay stubs / bank statements in three layouts
+   with ground truth; `extractor.py` does pdfplumber text -> Bedrock
+   structured output into `schemas.py`; `validators.py` is deterministic
+   arithmetic checks (same role as `guardrails.py` — keep it plain Python).
+   Schemas deliberately have no cross-field validators: extract what the
+   document says, let `validators.py` flag inconsistencies.
+   `eval/eval_extraction.py` scores field accuracy, transaction P/R, and the
+   silent error rate (wrong extraction that passed validation).
+9. `.github/workflows/eval.yml` — runs both evals on every push to `master`
    (this repo's default branch — NOT `main`, check before assuming).
 
 ## Known gotchas — read before touching Bedrock calls
@@ -74,6 +83,8 @@ python data_seed.py                    # seed synthetic data into DynamoDB
 python main.py                          # run one case locally
 python eval/eval_agentic.py               # safety/correctness eval
 python eval/fair_lending_eval.py             # fairness eval (set EVAL_N_REPEATS=N for stability check)
+python -m extraction.synth                   # write sample synthetic PDFs to extraction/sample_docs/
+python eval/eval_extraction.py               # extraction eval (EXTRACTION_DOCS_PER_LAYOUT, default 4)
 ./deploy.sh                                   # full AWS deploy (Terraform + Docker + Lambda)
 ```
 
